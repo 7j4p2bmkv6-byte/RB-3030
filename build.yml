@@ -1,0 +1,93 @@
+name: Build TB-3030 v1
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # Works whatever way the files were uploaded (with or without folders)
+      - name: Arrange TB-3030 files (any upload layout)
+        shell: bash
+        run: |
+          set -e
+          echo "=== TB-3030 workflow v1 ==="
+          rm -rf _proj
+          mkdir -p _proj/Source _proj/installer _proj/resources
+          findfile() {
+            find . -path ./_proj -prune -o -path ./.git -prune -o -type f -name "$1" -print | grep -v "/tools/" | head -1
+          }
+          missing=0
+          for f in TB303Engine.h FactoryData.h SoundBank.h SoundBank.cpp PluginProcessor.h PluginProcessor.cpp PluginEditor.h PluginEditor.cpp PanelComponents.h; do
+            p=$(findfile "$f")
+            if [ -z "$p" ]; then echo "ERROR: missing $f - please upload it"; missing=1; else cp "$p" _proj/Source/; echo "found $p"; fi
+          done
+          CML=$(grep -rl --include=CMakeLists.txt "juce_add_plugin(TB3030" . 2>/dev/null | grep -v "^./_proj" | head -1 || true)
+          if [ -z "$CML" ]; then echo "ERROR: missing CMakeLists.txt (TB-3030 version) - please upload it"; missing=1; else cp "$CML" _proj/CMakeLists.txt; echo "found $CML"; fi
+          for f in TB3030.iss:installer icon.png:resources icon.ico:resources README.md:. ; do
+            name=${f%%:*}; dir=${f##*:}
+            p=$(findfile "$name")
+            if [ -z "$p" ]; then
+              if [ "$name" = "README.md" ]; then echo "TB-3030" > _proj/README.md; else echo "ERROR: missing $name - please upload it"; missing=1; fi
+            else cp "$p" "_proj/$dir/"; echo "found $p"; fi
+          done
+          if [ "$missing" = "1" ]; then echo "Some files are missing - see the ERROR lines above."; exit 1; fi
+          echo "All files found."
+
+      - name: Get JUCE 8.0.6
+        shell: bash
+        run: |
+          set -e
+          git config --global advice.detachedHead false
+          git clone --depth 1 --branch 8.0.6 https://github.com/juce-framework/JUCE.git _proj/JUCE
+
+      - name: Get ASIO SDK (optional)
+        shell: bash
+        continue-on-error: true
+        run: |
+          curl -L -f -s -o asio.zip https://www.steinberg.net/asiosdk || { echo "ASIO SDK download failed - building without ASIO"; exit 0; }
+          unzip -q asio.zip -d asio_tmp || { echo "ASIO zip could not be opened - building without ASIO"; exit 0; }
+          h=$(find asio_tmp -name iasiodrv.h | head -1)
+          if [ -z "$h" ]; then echo "ASIO headers not found - building without ASIO"; exit 0; fi
+          root=$(dirname "$(dirname "$h")")
+          mkdir -p _proj/asiosdk
+          cp -r "$root"/* _proj/asiosdk/
+          ls _proj/asiosdk/common/iasiodrv.h && echo "ASIO SDK ready"
+
+      - name: Configure
+        run: cmake -S _proj -B _proj/build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build VST3 and stand-alone app
+        run: cmake --build _proj/build --config Release --parallel
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y | Out-Null
+          $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" | Select-Object -First 1
+          & $iscc.FullName "_proj\installer\TB3030.iss"
+
+      - name: Make portable package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          Copy-Item "_proj\build\TB3030_artefacts\Release\Standalone\TB-3030.exe" portable\
+          Copy-Item -Recurse "_proj\build\TB3030_artefacts\Release\VST3\TB-3030.vst3" portable\
+          Copy-Item "_proj\README.md" portable\README.txt
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: TB-3030-Windows-Setup
+          path: _proj/installer/Output/*.exe
+
+      - name: Upload portable version
+        uses: actions/upload-artifact@v4
+        with:
+          name: TB-3030-Windows-Portable
+          path: portable
