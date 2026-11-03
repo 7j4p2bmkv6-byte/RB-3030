@@ -1,4 +1,4 @@
-name: Build TB-3030 v1
+name: Build TB-3030 v2
 
 on:
   push:
@@ -11,12 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Works whatever way the files were uploaded (with or without folders)
       - name: Arrange TB-3030 files (any upload layout)
         shell: bash
         run: |
           set -e
-          echo "=== TB-3030 workflow v1 ==="
+          echo "=== TB-3030 workflow v2 ==="
           rm -rf _proj
           mkdir -p _proj/Source _proj/installer _proj/resources
           findfile() {
@@ -60,7 +59,13 @@ jobs:
           ls _proj/asiosdk/common/iasiodrv.h && echo "ASIO SDK ready"
 
       - name: Configure
-        run: cmake -S _proj -B _proj/build -G "Visual Studio 17 2022" -A x64
+        shell: pwsh
+        run: |
+          Write-Host "Visual Studio installations on this runner:"
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -all -products * -format value -property displayName
+          cmake --version
+          cmake -S _proj -B _proj/build -A x64
+          if ($LASTEXITCODE -ne 0) { Write-Host "CMake configure failed - see the lines above"; exit 1 }
 
       - name: Build VST3 and stand-alone app
         run: cmake --build _proj/build --config Release --parallel
