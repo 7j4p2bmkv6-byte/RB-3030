@@ -1,0 +1,8 @@
+#include "Sequencer.h"
+void AcidSequencer::prepare(double s){sr=s;reset();}void AcidSequencer::reset(){countdown=0;current=-1;active=-1;}
+void AcidSequencer::setRunning(bool b){running=b;if(!b)reset();}
+void AcidSequencer::clear(){for(auto&s:steps)s=AcidStep{};}
+void AcidSequencer::randomise(juce::Random&r){static int scale[]={0,3,5,7,10,12};for(auto&s:steps){s.enabled=r.nextFloat()>.22f;s.note=36+scale[r.nextInt(6)];s.accent=r.nextFloat()>.72f;s.slide=r.nextFloat()>.78f;s.octaveUp=r.nextFloat()>.86f;s.octaveDown=false;s.gate=.55f+r.nextFloat()*.4f;}}
+void AcidSequencer::process(int n,juce::MidiBuffer&m){if(!running)return;double base=sr*60.0/bpm/4.0;for(int i=0;i<n;++i){if(countdown<=0){auto prev=active;current=(current+1)%length;auto&s=steps[(size_t)current];if(prev>=0&&(!s.enabled||!s.slide))m.addEvent(juce::MidiMessage::noteOff(1,prev),i);active=-1;if(s.enabled){active=s.effectiveNote();m.addEvent(juce::MidiMessage::noteOn(1,active,(juce::uint8)(s.accent?127:92)),i);if(!s.slide){auto off=juce::jlimit(i,n-1,i+(int)(base*s.gate));m.addEvent(juce::MidiMessage::noteOff(1,active),off);}}countdown+=base*((current&1)?1.0+swing:1.0-swing);}countdown-=1.0;}}
+juce::ValueTree AcidSequencer::toTree()const{juce::ValueTree v("PATTERN");v.setProperty("length",length,nullptr);v.setProperty("swing",swing,nullptr);for(int i=0;i<16;++i)v.appendChild(steps[(size_t)i].toTree(i),nullptr);return v;}
+void AcidSequencer::fromTree(const juce::ValueTree&v){length=(int)v.getProperty("length",16);swing=(float)v.getProperty("swing",0.f);for(auto c:v){int i=(int)c["i"];if(juce::isPositiveAndBelow(i,16))steps[(size_t)i].fromTree(c);}}
